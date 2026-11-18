@@ -2,6 +2,8 @@
 
 通过 Lark 私聊驱动本机 Codex 执行任务，使用 Lark 官方 Node SDK 的 WebSocket 长连接、Codex 官方 TypeScript SDK 和 AWS Secrets Manager。不需要公网服务器或 HTTP 回调。
 
+AWS 常驻部署、机器登录和服务管理见 [部署说明](./deploy/README.md)。
+
 ## 安装与配置
 
 需要 Node.js >= 22.18、AWS 凭据，以及有 Codex 使用权限的 ChatGPT 账号。
