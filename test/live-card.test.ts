@@ -87,3 +87,13 @@ test('超长最终结果主卡保留首段，其余段落完整交付', async ()
   await card.finish(source);
   assert.equal(first + remainder.join(''), source);
 });
+
+test('重启后复用保存的卡片 ID，不重新创建消息', async () => {
+  const writes: string[] = [];
+  const card = await createTaskCardFactory(async () => { assert.fail('不能创建新卡片'); }, async (id, content) => {
+    assert.equal(id, 'om_saved'); writes.push(markdown(content)); return { code: 0 };
+  }, async () => assert.fail('不应回退'), 1)('om_user', '恢复中', 'om_saved');
+  assert.equal(card.messageId, 'om_saved');
+  await card.finish('中断通知');
+  assert.deepEqual(writes, ['中断通知']);
+});

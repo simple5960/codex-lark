@@ -6,10 +6,11 @@ export type TaskProgress = {
 };
 
 export interface TaskCard {
+  readonly messageId?: string;
   update(markdown: string): void;
   finish(markdown: string): Promise<void>;
 }
-export type TaskCardFactory = (messageId: string, markdown: string) => Promise<TaskCard>;
+export type TaskCardFactory = (messageId: string, markdown: string, existingMessageId?: string) => Promise<TaskCard>;
 
 function escape(text: string) { return text.replace(/[\\`*_\[\]<>#]/g, '\\$&'); }
 function duration(ms: number) {
@@ -33,7 +34,7 @@ export function renderProgress(progress: TaskProgress, elapsedMs: number) {
   return sections.join('\n\n');
 }
 
-export function renderFinal(status: 'completed' | 'failed' | 'cancelled' | 'timeout', text: string, elapsedMs: number) {
-  const labels = { completed: '✅ 任务完成', failed: '❌ 任务失败', cancelled: '⏹️ 任务已取消', timeout: '⏱️ 任务超时' };
+export function renderFinal(status: 'completed' | 'failed' | 'cancelled' | 'timeout' | 'interrupted', text: string, elapsedMs: number) {
+  const labels = { completed: '✅ 任务完成', failed: '❌ 任务失败', cancelled: '⏹️ 任务已取消', timeout: '⏱️ 任务超时', interrupted: '⏸️ 任务已中断' };
   return `## ${labels[status]}\n\n**耗时：** ${duration(elapsedMs)}\n\n${text}`;
 }

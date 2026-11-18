@@ -46,6 +46,8 @@ LARK_DOMAIN=lark
 ALLOWED_OPEN_IDS=ou_e988b0efe35f221758d3e6565ef5deb8
 CODEX_WORKSPACE=/srv/codex/workspace
 CODEX_SANDBOX=workspace-write
+MAX_PARALLEL_TASKS=2
+MAX_QUEUED_TASKS=20
 EOF
 chown root:codex /opt/codex-lark/.env.prod
 chmod 640 /opt/codex-lark/.env.prod

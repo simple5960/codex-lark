@@ -43,6 +43,7 @@ async function main() {
     });
     if (stopping) return;
     await ws.start({ eventDispatcher: dispatcher });
+    await bridge.start();
     console.log(`Lark 连接状态：${ws.getConnectionStatus().state}；工作目录：${config.workspace}；授权用户数：${config.allowed.size}`);
     if (!config.allowed.size) console.log('请私聊机器人发送 /whoami，再配置 ALLOWED_OPEN_IDS 并重启。');
   } catch (error) {

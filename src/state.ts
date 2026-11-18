@@ -1,17 +1,19 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import type { TaskRecord } from './tasks.ts';
 
-type Data = { threads: Record<string, string>; seen: Record<string, number> };
+type Data = { threads: Record<string, string>; seen: Record<string, number>; tasks: Record<string, TaskRecord>; current: Record<string, string> };
 export class State {
-  data: Data = { threads: {}, seen: {} };
+  data: Data = { threads: {}, seen: {}, tasks: {}, current: {} };
   private writes = Promise.resolve();
   readonly path: string;
   constructor(path: string) { this.path = path; }
   async load() {
     try {
       const parsed = JSON.parse(await readFile(this.path, 'utf8')) as Data;
-      if (!parsed.threads || !parsed.seen || typeof parsed.threads !== 'object' || typeof parsed.seen !== 'object') throw new Error('会话状态文件损坏');
-      this.data = parsed;
+      const isMap = (value: unknown) => !!value && typeof value === 'object' && !Array.isArray(value);
+      if (!isMap(parsed.threads) || !isMap(parsed.seen) || (parsed.tasks !== undefined && !isMap(parsed.tasks)) || (parsed.current !== undefined && !isMap(parsed.current))) throw new Error('会话状态文件损坏');
+      this.data = { ...parsed, tasks: parsed.tasks ?? {}, current: parsed.current ?? {} };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }

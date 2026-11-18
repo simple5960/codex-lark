@@ -6,6 +6,7 @@ export type RunHooks = {
   signal: AbortSignal;
   onThread(id: string): Promise<void>;
   onProgress?(progress: TaskProgress): void;
+  workingDirectory?: string;
 };
 export interface Runner {
   run(prompt: string, threadId: string | undefined, hooks: RunHooks): Promise<string>;
@@ -67,7 +68,8 @@ export function createRunner(config: Config): Runner {
   };
   return {
     async run(prompt, threadId, hooks) {
-      const thread = threadId ? codex.resumeThread(threadId, options) : codex.startThread(options);
+      const taskOptions = { ...options, workingDirectory: hooks.workingDirectory || config.workspace };
+      const thread = threadId ? codex.resumeThread(threadId, taskOptions) : codex.startThread(taskOptions);
       const { events } = await thread.runStreamed(prompt, { signal: hooks.signal });
       return consumeEvents(events, hooks);
     },

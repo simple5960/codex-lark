@@ -8,6 +8,7 @@ type PatchCard = (messageId: string, content: string) => Promise<{ code?: number
 const content = (markdown: string) => JSON.stringify(markdownCard(markdown));
 
 class LiveCard implements TaskCard {
+  get messageId() { return this.cardId; }
   private pending: string | undefined;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private busy: Promise<void> | undefined;
@@ -74,7 +75,12 @@ class LiveCard implements TaskCard {
 }
 
 export function createTaskCardFactory(create: CreateCard, patch: PatchCard, reply: Reply, intervalMs = 2000): TaskCardFactory {
-  return async (messageId, markdown) => {
+  return async (messageId, markdown, existingMessageId) => {
+    if (existingMessageId) {
+      const card = new LiveCard(messageId, existingMessageId, patch, reply, intervalMs);
+      card.update(markdown);
+      return card;
+    }
     const result = await create(messageId, content(markdown));
     const cardId = result.data?.message_id;
     if (result.code !== 0 || !cardId) throw new Error('无法创建任务进度卡片');
