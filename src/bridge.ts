@@ -1,6 +1,7 @@
 import type { Config } from './config.ts';
 import type { Runner } from './runner.ts';
 import type { State } from './state.ts';
+import { renderProgress, renderFinal, type TaskProgress, type TaskCard, type TaskCardFactory } from './progress.ts';
 
 export type MessageEvent = {
   sender: { sender_type?: string; sender_id?: { open_id?: string } };
@@ -16,8 +17,10 @@ export class Bridge {
   private state: State;
   private runner: Runner;
   private reply: Reply;
-  constructor(config: Config, state: State, runner: Runner, reply: Reply) {
+  private startTask: TaskCardFactory | undefined;
+  constructor(config: Config, state: State, runner: Runner, reply: Reply, startTask?: TaskCardFactory) {
     this.config = config; this.state = state; this.runner = runner; this.reply = reply;
+    this.startTask = startTask;
   }
 
   async receive(event: MessageEvent) {
@@ -62,27 +65,38 @@ export class Bridge {
     // 先占用工作目录，再异步发送确认消息。
     const active = { key, controller, done: Promise.resolve() };
     this.active = active;
-    active.done = this.execute(key, prompt, controller, send);
+    active.done = this.execute(key, message.message_id, prompt, controller, send);
     // Lark handler 立即返回 ACK；长任务在后台运行，避免消息重试。
     void active.done.finally(() => { if (this.active === active) this.active = undefined; }).catch(() => {});
   }
 
-  private async execute(key: string, prompt: string, controller: AbortController, send: (text: string) => Promise<void>) {
+  private async execute(key: string, messageId: string, prompt: string, controller: AbortController, send: (text: string) => Promise<void>) {
     let timedOut = false;
+    const started = Date.now();
+    let card: TaskCard | undefined;
+    let progress: TaskProgress = { step: '正在启动 Codex' };
+    const elapsed = () => Date.now() - started;
+    const finish = (status: Parameters<typeof renderFinal>[0], text: string) => card ? card.finish(renderFinal(status, text, elapsed())) : send(text);
     const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, this.config.timeout);
     const heartbeat = setInterval(() => {
-      void send('Codex 仍在执行，可发送 /cancel 取消。').catch(() => console.error('进度消息发送失败'));
+      if (card) card.update(renderProgress(progress, elapsed()));
+      else if (!this.startTask) void send('Codex 仍在执行，可发送 /cancel 取消。').catch(() => console.error('进度消息发送失败'));
     }, 60_000);
     try {
-      await send('已收到，Codex 开始执行。');
+      if (this.startTask) card = await this.startTask(messageId, renderProgress(progress, elapsed()));
+      else await send('已收到，Codex 开始执行。');
       const result = await this.runner.run(prompt, this.state.data.threads[key], {
         signal: controller.signal,
         onThread: async id => { this.state.data.threads[key] = id; await this.state.save(); },
+        onProgress: update => {
+          progress = update;
+          card?.update(renderProgress(progress, elapsed()));
+        },
       });
-      await send(result);
+      await finish('completed', result);
     } catch {
       const text = timedOut ? '任务已超时并停止。已产生的文件修改会保留。' : controller.signal.aborted ? '任务已取消。已产生的文件修改会保留。' : '任务执行或结果发送失败。请检查本机 ChatGPT 登录、模型权限及网络连接；可用 /new 重开会话后重试。';
-      await send(text).catch(() => console.error('任务通知发送失败'));
+      await finish(timedOut ? 'timeout' : controller.signal.aborted ? 'cancelled' : 'failed', text).catch(() => console.error('任务通知发送失败'));
       console.error(timedOut ? '任务超时' : controller.signal.aborted ? '任务取消' : '任务失败（未记录提示词或原始异常）');
     } finally { clearTimeout(timeout); clearInterval(heartbeat); }
   }

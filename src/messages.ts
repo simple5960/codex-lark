@@ -30,6 +30,7 @@ export function markdownParts(text: string, maxBytes = 4_000): string[] {
 export function markdownCard(markdown: string) {
   return {
     schema: '2.0',
+    config: { update_multi: true },
     body: { elements: [{ tag: 'markdown', content: markdown }] },
   };
 }

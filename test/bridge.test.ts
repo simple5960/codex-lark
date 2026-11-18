@@ -8,22 +8,26 @@ import { State } from '../src/state.ts';
 import { parseSecret } from '../src/secrets.ts';
 import { codexEnvironment, type Runner } from '../src/runner.ts';
 import type { Config } from '../src/config.ts';
+import type { TaskCardFactory } from '../src/progress.ts';
 
 function event(text: string, id = Math.random().toString(), user = 'ou_owner'): MessageEvent {
   return { sender: { sender_type: 'user', sender_id: { open_id: user } }, message: { message_id: id, chat_id: 'chat', chat_type: 'p2p', message_type: 'text', content: JSON.stringify({ text }) } };
 }
-async function setup(t: { after(fn: () => Promise<void>): void }, runner: Runner) {
+async function setup(t: { after(fn: () => Promise<void>): void }, runner: Runner, startTask?: TaskCardFactory) {
   const dir = await mkdtemp(join(tmpdir(), 'codex-lark-test-'));
-  t.after(() => rm(dir, { recursive: true, force: true }));
   const state = new State(join(dir, 'state.json'));
   await state.load();
   const replies: string[] = [];
   const config: Config = { workspace: dir, statePath: state.path, allowed: new Set(['ou_owner']), timeout: 5000, sandbox: 'workspace-write', domain: 'lark', secretId: 'test', region: undefined, model: undefined };
-  const bridge = new Bridge(config, state, runner, async (_, text) => { replies.push(text); });
-  t.after(() => bridge.shutdown());
+  const bridge = new Bridge(config, state, runner, async (_, text) => { replies.push(text); }, startTask);
+  t.after(async () => { await bridge.shutdown(); await rm(dir, { recursive: true, force: true }); });
   return { bridge, state, replies, config };
 }
 const tick = () => new Promise(resolve => setTimeout(resolve, 20));
+async function until(predicate: () => boolean) {
+  const end = Date.now() + 2000;
+  while (!predicate()) { assert.ok(Date.now() < end, '等待任务状态超时'); await tick(); }
+}
 
 test('未授权用户只能查询身份，群聊、机器人和畸形内容不触发执行', async t => {
   let calls = 0;
@@ -97,4 +101,55 @@ test('长消息按 UTF-8 字节切分，保留中文和 emoji', () => {
   const parts = chunks(text);
   assert.equal(parts.join(''), text);
   assert.ok(parts.every(s => Buffer.byteLength(s) <= 12000));
+});
+
+test('任务开始、进度和最终结果通过同一张卡片交付，不额外回复最终结果', async t => {
+  const updates: string[] = [];
+  const finals: string[] = [];
+  let initial = '';
+  let release!: () => void;
+  const blocked = new Promise<void>(resolve => { release = resolve; });
+  const { bridge, replies } = await setup(t, { run: async (_, __, hooks) => {
+    hooks.onProgress?.({ step: '执行测试', output: '3 个测试通过', outputKind: 'text' });
+    await blocked; return '**任务完成**';
+  } }, async (id, text) => {
+    assert.equal(id, 'live-task'); initial = text;
+    return { update: text => { updates.push(text); }, finish: async text => { finals.push(text); } };
+  });
+  await bridge.receive(event('测试', 'live-task'));
+  await until(() => updates.length === 1);
+  assert.match(initial, /正在启动 Codex/);
+  assert.match(updates[0]!, /3 个测试通过/);
+  release(); await until(() => finals.length === 1);
+  assert.match(finals[0]!, /✅ 任务完成/);
+  assert.match(finals[0]!, /\*\*任务完成\*\*/);
+  assert.deepEqual(replies, []);
+});
+
+test('取消、超时和失败均写回任务卡片的终态', async t => {
+  for (const mode of ['cancel', 'timeout', 'failure']) await t.test(mode, async t => {
+    const finals: string[] = [];
+    let running = false;
+    const { bridge, config } = await setup(t, { run: async (_, __, { signal }) => {
+      running = true;
+      if (mode === 'failure') throw new Error('failed');
+      await new Promise<void>((_, reject) => signal.addEventListener('abort', () => reject(new Error('abort')), { once: true }));
+      return '';
+    } }, async () => ({ update: () => {}, finish: async text => { finals.push(text); } }));
+    if (mode === 'timeout') config.timeout = 30;
+    await bridge.receive(event('work'));
+    await until(() => running);
+    if (mode === 'cancel') await bridge.receive(event('/cancel'));
+    await until(() => finals.length === 1);
+    assert.match(finals[0]!, mode === 'cancel' ? /任务已取消/ : mode === 'timeout' ? /任务超时/ : /任务失败/);
+  });
+});
+
+test('初始卡片创建失败时不执行无法观测的任务', async t => {
+  let calls = 0;
+  const { bridge, replies } = await setup(t, { run: async () => { calls++; return ''; } }, async () => { throw new Error('create failed'); });
+  await bridge.receive(event('work'));
+  await until(() => replies.length === 1);
+  assert.equal(calls, 0);
+  assert.match(replies[0]!, /失败/);
 });

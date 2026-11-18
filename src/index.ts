@@ -34,7 +34,7 @@ async function main() {
     await checkBot(transport.client);
     const state = new State(config.statePath);
     await state.load();
-    bridge = new Bridge(config, state, createRunner(config), transport.reply);
+    bridge = new Bridge(config, state, createRunner(config), transport.reply, transport.startTask);
     const dispatcher = new lark.EventDispatcher({}).register({
       'im.message.receive_v1': async event => {
         try { await bridge!.receive(event); }

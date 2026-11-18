@@ -1,5 +1,7 @@
 import * as lark from '@larksuiteoapi/node-sdk';
 import { createMarkdownReply } from './messages.ts';
+import { createTaskCardFactory } from './live-card.ts';
+import { randomUUID } from 'node:crypto';
 
 export async function checkBot(client: lark.Client) {
   const result = await client.request<{ code: number; bot?: { app_name?: string } }>({ method: 'GET', url: '/open-apis/bot/v3/info/' });
@@ -31,5 +33,12 @@ export function createLark(credentials: { appId: string; appSecret: string }, do
   const reply = createMarkdownReply((messageId, data) => client.im.message.reply({
     path: { message_id: messageId }, data,
   }));
-  return { client, ws, reply };
+  const startTask = createTaskCardFactory(
+    (messageId, content) => client.im.message.reply({
+      path: { message_id: messageId }, data: { msg_type: 'interactive', content, uuid: randomUUID() },
+    }),
+    (messageId, content) => client.im.message.patch({ path: { message_id: messageId }, data: { content } }),
+    reply,
+  );
+  return { client, ws, reply, startTask };
 }
