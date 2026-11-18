@@ -303,3 +303,23 @@ test('群会话重启保留上下文，回复旧卡片仍衔接最新一轮；ne
   await until(() => env.finals.length === 4);
   assert.equal(inputs[3]!.thread, undefined); assert.notEqual(inputs[3]!.workspace, inputs[0]!.workspace);
 });
+
+test('群前一条消息创建卡片失败后，已就绪的后续任务能继续调度', async t => {
+  let rejectFirst!: (error: Error) => void;
+  let creating = false;
+  const prompts: string[] = [];
+  const factory: TaskCardFactory = async id => {
+    if (id === 'broken-card') {
+      creating = true;
+      await new Promise((_, reject) => { rejectFirst = reject; });
+    }
+    return { messageId: `card-${id}`, update: () => {}, finish: async () => {} };
+  };
+  const env = await setup(t, { run: async prompt => { prompts.push(prompt); return 'done'; } }, factory);
+  const first = env.bridge.receive(groupEvent('first', 'a', 'ou_owner', 'broken-card'));
+  await until(() => creating);
+  await env.bridge.receive(groupEvent('second', 'a'));
+  assert.deepEqual(prompts, []);
+  rejectFirst(new Error('card failed')); await first;
+  await until(() => prompts.length === 1); assert.deepEqual(prompts, ['second']);
+});

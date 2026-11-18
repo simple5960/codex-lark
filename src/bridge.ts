@@ -240,7 +240,7 @@ export class Bridge {
       this.ready.add(task.id); this.pump();
     } catch {
       task.phase = 'failed'; task.lastResult = '创建任务卡片失败，任务未执行。可用 /continue 任务ID 描述 重试。';
-      await this.state.save(); await send(task.lastResult);
+      await this.state.save(); this.pump(); await send(task.lastResult);
     }
   }
 
