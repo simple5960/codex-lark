@@ -1,0 +1,41 @@
+{
+  "name": "codex-lark",
+  "version": "1.0.0",
+  "description": "Lark chat bridge for local Codex with ChatGPT login",
+  "scripts": {
+    "start": "node src/index.ts",
+    "doctor": "node src/doctor.ts",
+    "login": "codex login",
+    "login:device": "codex login --device-auth",
+    "login:status": "codex login status",
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
+    "build": "tsc"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/simple5960/codex-lark.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/simple5960/codex-lark/issues"
+  },
+  "homepage": "https://github.com/simple5960/codex-lark#readme",
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.1170.0",
+    "@larksuiteoapi/node-sdk": "^1.76.0",
+    "@openai/codex-sdk": "^0.170.0",
+    "dotenv": "^18.0.10"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2"
+  },
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=22.18.0"
+  }
+}
