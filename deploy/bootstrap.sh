@@ -22,7 +22,7 @@ id codex >/dev/null 2>&1 || useradd --create-home --shell /bin/bash codex
 install -d -o root -g root -m 755 /opt/codex-lark
 git clone --branch main --single-branch https://github.com/simple5960/codex-lark.git /opt/codex-lark
 cd /opt/codex-lark
-git checkout 78f9390
+git checkout "${CODEX_LARK_REVISION:-main}"
 # Use the official npm registry on AWS, preserving package integrity checks.
 python3 - <<'PY'
 from pathlib import Path

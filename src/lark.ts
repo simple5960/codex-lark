@@ -1,6 +1,5 @@
 import * as lark from '@larksuiteoapi/node-sdk';
-import { randomUUID } from 'node:crypto';
-import { chunks, type Reply } from './bridge.ts';
+import { createMarkdownReply } from './messages.ts';
 
 export async function checkBot(client: lark.Client) {
   const result = await client.request<{ code: number; bot?: { app_name?: string } }>({ method: 'GET', url: '/open-apis/bot/v3/info/' });
@@ -29,14 +28,8 @@ export function createLark(credentials: { appId: string; appSecret: string }, do
     onReconnected: () => console.log('Lark WebSocket 已恢复连接'),
     onError: () => console.error('Lark WebSocket 连接失败，请检查后台长连接设置及网络'),
   });
-  const reply: Reply = async (messageId, text) => {
-    for (const part of chunks(text)) {
-      const response = await client.im.message.reply({
-        path: { message_id: messageId },
-        data: { msg_type: 'text', content: JSON.stringify({ text: part }), uuid: randomUUID() },
-      });
-      if (response.code !== 0) throw new Error('Lark 回复失败');
-    }
-  };
+  const reply = createMarkdownReply((messageId, data) => client.im.message.reply({
+    path: { message_id: messageId }, data,
+  }));
   return { client, ws, reply };
 }
