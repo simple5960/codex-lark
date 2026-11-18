@@ -1,6 +1,6 @@
 # simple's codex · Lark ↔ Codex
 
-通过 Lark 私聊驱动本机 Codex 执行任务，使用 Lark 官方 Node SDK 的 WebSocket 长连接、Codex 官方 TypeScript SDK 和 AWS Secrets Manager。不需要公网服务器或 HTTP 回调。
+通过 Lark 私聊或群聊驱动本机 Codex 执行任务，使用 Lark 官方 Node SDK 的 WebSocket 长连接、Codex 官方 TypeScript SDK 和 AWS Secrets Manager。不需要公网服务器或 HTTP 回调。
 
 AWS 常驻部署、机器登录和服务管理见 [部署说明](./deploy/README.md)。
 
@@ -35,6 +35,7 @@ Secret 必须是 JSON，包含 `simple-codex-app-id` 和 `simple-codex-app-secre
 
 1. 启用应用的「机器人」能力。
 2. 在「权限管理」添加 `im:message.p2p_msg:readonly`（读取用户发给机器人的单聊消息）和 `im:message:send_as_bot`（以应用身份发送消息）。
+   群聊另需添加 `im:message.group_at_msg:readonly`（接收 @机器人的群消息）。如果希望群里无需 @ 就能直接下任务，申请 `im:message.group_msg`（获取群组中所有消息，敏感权限），审批发布后生效。机器人必须已加入对应群。
 3. 在「事件与回调」选择「使用长连接接收事件」，订阅 `im.message.receive_v1`。
 4. 创建并发布版本，将自己加入应用可用范围；如组织要求审批，等待审批后生效。
 5. 本机运行 `npm start` 建立连接。首次配置时可先启动连接，再保存后台长连接设置。
@@ -55,9 +56,9 @@ npm start            # 前台启动；保持此进程和机器在线
 
 | 消息 | 功能 |
 | --- | --- |
-| 普通文本 | 当前任务空闲时续聊；忙碌时创建独立任务 |
+| 普通文本 | 群聊持续使用本群上下文，忙时顺序排队；私聊空闲时续聊、忙时创建独立任务 |
 | `/task 描述` | 显式创建独立任务，可连续提交多条 |
-| `/tasks` | 查看自己的最近任务及 ID |
+| `/tasks` | 查看本群的最近任务及 ID；私聊查看自己的任务 |
 | `/continue 任务ID 描述` | 继续指定任务，复用其目录与 Codex 线程 |
 | `/result 任务ID` | 查看任务的最近结果 |
 | `/whoami` | 查询 Lark open_id，无需事先授权 |
@@ -67,9 +68,13 @@ npm start            # 前台启动；保持此进程和机器在线
 | `/cancel [任务ID]` | 取消自己正在执行或排队的任务；多任务时需指定 ID |
 | `/login` | 查看本机 ChatGPT 登录说明 |
 
-多个授权用户用逗号分隔。空白白名单禁止执行任务。只处理真人私聊的文本消息，忽略群聊、机器人消息和附件，不需要建立多个群。任务按工作目录、聊天、发送者隔离，其他用户不能查询、续聊或取消你的任务。回复某张任务卡片会定位到对应任务；该任务正在执行时会提示使用 `/task` 另开任务。
+### 用群区分上下文
 
-默认同时运行 2 个任务，额外最多排队 20 个；队列满时明确拒绝，取消或完成后自动补位。`MAX_PARALLEL_TASKS` 可设为 1–8，`MAX_QUEUED_TASKS` 可设为 0–100。AWS 的 t3.small 默认使用 2 个并发名额；提高并发前需自行评估 CPU、内存和 ChatGPT 额度。`TASK_TIMEOUT_MS` 默认 30 分钟，从任务开始执行时计时，不包括排队。消息 ID 持久化去重一天。
+新建不同的 Lark 群并分别拉入机器人，直接发需求即可，无需 `/session`。群 A、群 B 各自保留 Codex 线程、工作目录和文件修改，可以同时执行。每个群的新消息形成一个新的任务记录和进度卡片，自动衔接上一轮上下文；同群执行期间收到的新消息依次排队，待上一轮完成后复用最新线程和目录。回复旧卡片仍延续本群当前上下文。`/new` 可显式重开本群上下文，`/task 描述` 可显式新建独立上下文，同群仍顺序执行。
+
+多个授权用户用逗号分隔。空白白名单禁止执行任务。只处理授权真人的文本消息，忽略机器人消息和附件。**同群的授权成员共享上下文，也能查询、续聊和取消本群任务；结果会发到群内，所有群成员都可能看到。** 未授权成员不能操作；不同群和私聊相互隔离，私聊仍按发送者隔离。群里只有 @消息权限时，每条请求（含命令）都需 @机器人；只有实际推送到服务的消息会进入上下文，不会自动读取历史群聊。正文开头的结构化 @提及会被去除。
+
+默认同时运行 2 个任务，额外最多排队 20 个；队列满时明确拒绝，取消或完成后自动补位。`MAX_PARALLEL_TASKS` 可设为 1–8，`MAX_QUEUED_TASKS` 可设为 0–100。当前 AWS m7i.xlarge（4 vCPU / 16 GiB）部署设为 4 个并发名额；仓库默认仍为 2。提高并发需评估 CPU、内存和 ChatGPT 额度。`TASK_TIMEOUT_MS` 默认 30 分钟，从任务开始执行时计时，不包括排队。消息 ID 持久化去重一天。
 
 每个新任务使用独立 Git worktree 和 `codex/task-txxxxxxxx` 分支。`CODEX_WORKSPACE` 必须指向已有提交的 Git 仓库根目录。新任务基于该仓库的已提交 HEAD 创建，不会复制原目录里的未提交或未跟踪文件，也不会自动复制 node_modules、密钥或环境配置。需要依赖的项目应在各自目录安装/准备依赖；任务仍受当前网络沙箱限制。目录默认保存在 [.data/worktrees/](./.data/worktrees/)，可以通过 `TASK_WORKTREE_ROOT` 更改。
 
@@ -93,6 +98,6 @@ npm run typecheck
 npm run build
 ```
 
-测试覆盖权限拒绝、私聊过滤、去重、真实 worktree 同文件并行写入、调度限额与排队、指定任务续聊/取消、重启恢复、旧会话迁移、超时、进度卡片、Secret 校验和中文长消息切分。真实 Lark 端到端验证需要发布应用、配置事件权限并发送一条私聊消息。
+测试覆盖权限拒绝、群聊隔离与共享上下文、同群排队、四群并行、重启续聊、去重、真实 worktree 同文件并行写入、调度限额与排队、指定任务续聊/取消、重启恢复、旧会话迁移、超时、进度卡片、Secret 校验和中文长消息切分。真实 Lark 端到端验证需要发布应用、配置事件权限并发送一条私聊消息。
 
 官方文档：[Codex SDK](https://developers.openai.com/codex/sdk/)、[Codex ChatGPT 登录](https://developers.openai.com/codex/auth/)、[Lark Node SDK](https://github.com/larksuite/node-sdk)。

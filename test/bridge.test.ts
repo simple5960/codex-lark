@@ -54,12 +54,12 @@ function blockedRunner() {
   return { calls, runner };
 }
 
-test('权限、私聊过滤、消息去重仍然生效', async t => {
+test('权限、非聊天过滤、消息去重仍然生效', async t => {
   let calls = 0;
   const { bridge, replies, state } = await setup(t, { run: async () => { calls++; return 'done'; } });
   await bridge.receive(event('work', 'unauthorized', 'ou_stranger'));
   await bridge.receive(event('/whoami', 'identity', 'ou_stranger'));
-  const group = event('work'); group.message.chat_type = 'group'; await bridge.receive(group);
+  const group = event('work'); group.message.chat_type = 'thread'; await bridge.receive(group);
   const bot = event('work'); bot.sender.sender_type = 'app'; await bridge.receive(bot);
   const malformed = event('bad'); malformed.message.content = '{}'; await bridge.receive(malformed);
   assert.equal(calls, 0); assert.ok(replies.some(item => item.text.includes('ou_stranger')));
@@ -229,4 +229,77 @@ test('Secret 校验、凭据环境隔离与中文分段', () => {
   assert.throws(() => parseSecret('{}'));
   assert.deepEqual(codexEnvironment({ HOME: '/home/test', AWS_SECRET_ACCESS_KEY: 'secret', OPENAI_API_KEY: 'secret' }), { HOME: '/home/test' });
   const text = '你好🙂'.repeat(5000); assert.equal(chunks(text).join(''), text);
+});
+
+function groupEvent(text: string, chat = 'group-a', user = 'ou_owner', id = Math.random().toString()): MessageEvent {
+  const message = event(text, id, user);
+  message.message.chat_type = 'group'; message.message.chat_id = chat;
+  return message;
+}
+
+test('四个群真正并行，同群授权用户共享上下文，后续消息依次执行', async t => {
+  const { calls, runner } = blockedRunner();
+  const { bridge, state, config } = await setup(t, runner);
+  config.parallel = 4; config.allowed.add('ou_other');
+  for (const chat of ['a', 'b', 'c', 'd']) await bridge.receive(groupEvent(`first-${chat}`, chat));
+  await until(() => calls.length === 4);
+  assert.equal(new Set(calls.map(call => call.workspace)).size, 4);
+  await bridge.receive(groupEvent('second-a', 'a', 'ou_other'));
+  await bridge.receive(groupEvent('third-a', 'a'));
+  assert.equal(calls.length, 4);
+  assert.equal(Object.values(state.data.tasks).filter(task => task.phase === 'queued').length, 2);
+  calls[0]!.release(); await until(() => calls.length === 5);
+  assert.equal(calls[4]!.prompt, 'second-a');
+  assert.equal(calls[4]!.thread, 'thread-0');
+  assert.equal(calls[4]!.workspace, calls[0]!.workspace);
+  calls[4]!.release(); await until(() => calls.length === 6);
+  assert.equal(calls[5]!.prompt, 'third-a'); assert.equal(calls[5]!.thread, 'thread-0');
+  assert.equal(calls[5]!.workspace, calls[0]!.workspace);
+  for (const call of calls) call.release();
+});
+
+test('群聊提及、命令、跨群权限与取消排队后的上下文衔接', async t => {
+  const { calls, runner } = blockedRunner();
+  const { bridge, state, replies, config } = await setup(t, runner);
+  config.allowed.add('ou_other');
+  const who = groupEvent('@_user_1 /whoami'); who.message.mentions = [{ key: '@_user_1' }];
+  await bridge.receive(who); assert.match(replies.at(-1)!.text, /ou_owner/);
+  await bridge.receive(groupEvent('forbidden', 'a', 'ou_stranger'));
+  assert.equal(Object.keys(state.data.tasks).length, 0);
+  const first = groupEvent('@_user_1 first', 'a'); first.message.mentions = [{ key: '@_user_1' }];
+  await bridge.receive(first); await until(() => calls.length === 1);
+  await bridge.receive(groupEvent('cancel this', 'a'));
+  await bridge.receive(groupEvent('after cancelled', 'a'));
+  const tasks = Object.values(state.data.tasks);
+  await bridge.receive(groupEvent(`/result ${tasks[0]!.id}`, 'b'));
+  assert.match(replies.at(-1)!.text, /找不到/);
+  await bridge.receive(groupEvent(`/tasks`, 'a', 'ou_other'));
+  assert.ok(replies.at(-1)!.text.includes(tasks[0]!.id));
+  await bridge.receive(groupEvent(`/cancel ${tasks[1]!.id}`, 'a', 'ou_other'));
+  calls[0]!.release(); await until(() => calls.length === 2);
+  assert.equal(calls[1]!.prompt, 'after cancelled');
+  assert.equal(calls[1]!.thread, 'thread-0'); assert.equal(calls[1]!.workspace, calls[0]!.workspace);
+  calls[1]!.release();
+});
+
+test('群会话重启保留上下文，回复旧卡片仍衔接最新一轮；new 显式重开', async t => {
+  const inputs: { prompt: string; thread?: string; workspace?: string }[] = [];
+  const runner: Runner = { run: async (prompt, thread, hooks) => {
+    inputs.push({ prompt, thread, workspace: hooks.workingDirectory });
+    await hooks.onThread(`thread-${inputs.length}`); return 'done';
+  } };
+  const env = await setup(t, runner);
+  await env.bridge.receive(groupEvent('first', 'a', 'ou_owner', 'first'));
+  await until(() => env.finals.length === 1); await env.bridge.shutdown();
+  const restored = new State(env.state.path); await restored.load();
+  const bridge = new Bridge(env.config, restored, runner, env.reply, env.startTask, env.workspaces);
+  t.after(() => bridge.shutdown()); await bridge.start();
+  await bridge.receive(groupEvent('second', 'a')); await until(() => env.finals.length === 2);
+  const third = groupEvent('third', 'a'); third.message.parent_id = 'card-first';
+  await bridge.receive(third); await until(() => env.finals.length === 3);
+  assert.equal(inputs[1]!.thread, 'thread-1'); assert.equal(inputs[2]!.thread, 'thread-2');
+  assert.equal(inputs[2]!.workspace, inputs[0]!.workspace);
+  await bridge.receive(groupEvent('/new', 'a')); await bridge.receive(groupEvent('fresh', 'a'));
+  await until(() => env.finals.length === 4);
+  assert.equal(inputs[3]!.thread, undefined); assert.notEqual(inputs[3]!.workspace, inputs[0]!.workspace);
 });

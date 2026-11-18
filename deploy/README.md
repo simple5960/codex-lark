@@ -6,7 +6,7 @@
 
 - 区域：`us-west-2`
 - 实例：`i-058d25437e4b5a9bd`（`simple-codex-lark`）
-- 类型：`t3.small`，20 GiB 加密 gp3 系统盘，2 GiB swap
+- 类型：`m7i.xlarge`（4 vCPU / 16 GiB），20 GiB 加密 gp3 系统盘，2 GiB swap
 - IAM Role：`simple-codex-ec2`，包含 Session Manager 权限及仅针对 `simple-codex` 的 Secret 读取权限
 - 安全组：仅出站，无入站规则；通过 AWS Session Manager 登录
 
@@ -48,6 +48,8 @@ sudo -u codex -H bash -lc 'cd /opt/codex-lark && npm run doctor'
 
 应用配置位于 `/opt/codex-lark/.env.prod`，该文件不包含 Lark Secret，只包含区域、Secret 名称、白名单和工作目录。修改后重启服务。登录缓存与 Codex 历史在 `/home/codex/.codex`；服务会话状态在 `/opt/codex-lark/.data`；项目修改在 `/srv/codex/workspace`。这些目录依赖系统盘持久化；终止实例会删除系统盘，重要代码应提交到 Git，并自行建立备份策略。
 
-并行功能默认 `MAX_PARALLEL_TASKS=2`、`MAX_QUEUED_TASKS=20`，升级时旧配置无需新增字段即可使用默认值。新任务的修改位于 `/opt/codex-lark/.data/worktrees/<任务ID>` 的独立分支；`/srv/codex/workspace` 作为新任务的已提交基线，同时保留旧会话的修改。更新服务代码不要覆盖、重置或删除这些任务目录。服务重启后恢复排队任务，运行中的任务标记中断，需要用户显式续聊。
+当前部署使用 `MAX_PARALLEL_TASKS=4`、`MAX_QUEUED_TASKS=20`（代码默认并发为 2），升级时旧配置无需新增字段即可使用默认值。新任务的修改位于 `/opt/codex-lark/.data/worktrees/<任务ID>` 的独立分支；`/srv/codex/workspace` 作为新任务的已提交基线，同时保留旧会话的修改。更新服务代码不要覆盖、重置或删除这些任务目录。服务重启后恢复排队任务，运行中的任务标记中断，需要用户显式续聊。
 
 参考：[AWS Session Manager 登录](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/connect-with-systems-manager-session-manager.html)、[Codex 设备码登录](https://developers.openai.com/codex/auth/)。
+
+群聊按 chat_id 共享上下文，同群顺序执行、不同群并行。后台需发布群消息读取权限，再将机器人加入群；只开 @权限时每条请求需 @机器人，免 @需 `im:message.group_msg` 权限。

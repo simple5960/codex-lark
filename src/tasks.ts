@@ -2,6 +2,8 @@ export type TaskPhase = 'queued' | 'running' | 'completed' | 'failed' | 'cancell
 export type TaskRecord = {
   id: string;
   ownerKey: string;
+  group?: boolean;
+  previousTaskId?: string;
   title: string;
   prompt: string;
   phase: TaskPhase;

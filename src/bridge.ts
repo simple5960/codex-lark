@@ -8,12 +8,13 @@ import { phaseLabels, type TaskRecord } from './tasks.ts';
 
 export type MessageEvent = {
   sender: { sender_type?: string; sender_id?: { open_id?: string } };
-  message: { message_id: string; chat_id: string; chat_type: string; message_type: string; content: string; parent_id?: string; root_id?: string };
+  message: { message_id: string; chat_id: string; chat_type: string; message_type: string; content: string; parent_id?: string; root_id?: string; mentions?: { key: string }[] };
 };
 export type Reply = (messageId: string, text: string) => Promise<void>;
 type ActiveTask = { controller: AbortController; done: Promise<void>; progress: TaskProgress };
 const help = [
-  '直接发消息：当前任务空闲时续聊，忙碌时创建独立任务。回复任务卡片可定位对应任务。',
+  '群聊：一个群共用上下文，同群消息依次执行，不同群并行。无需 /session。',
+  '私聊：空闲时续聊，忙碌时创建独立任务。回复卡片可定位任务。',
   '/task 描述：创建独立任务', '/tasks：查看自己的任务', '/status [任务ID]：任务状态',
   '/continue 任务ID 描述：继续指定任务', '/result 任务ID：查看最近结果',
   '/cancel [任务ID]：取消任务，多任务时请指定 ID', '/new [描述]：切换到新会话',
@@ -135,7 +136,7 @@ export class Bridge {
 
   async receive(event: MessageEvent) {
     const { message, sender } = event;
-    if (this.closing || sender.sender_type !== 'user' || message.chat_type !== 'p2p' || message.message_type !== 'text') return;
+    if (this.closing || sender.sender_type !== 'user' || !['p2p', 'group'].includes(message.chat_type) || message.message_type !== 'text') return;
     const user = sender.sender_id?.open_id;
     if (!user) return;
     let prompt: string;
@@ -143,6 +144,12 @@ export class Bridge {
       const body = JSON.parse(message.content) as { text?: unknown };
       if (typeof body.text !== 'string') return;
       prompt = body.text.trim();
+      // Lark 用 mentions 中的 key 表示 @；只移除开头的实际提及，保留正文中的提及。
+      for (;;) {
+        const mention = message.mentions?.find(item => item.key && prompt.startsWith(item.key) && /^(?:\s|$)/.test(prompt.slice(item.key.length)));
+        if (!mention) break;
+        prompt = prompt.slice(mention.key.length).trimStart();
+      }
     } catch { return; }
     if (!prompt || !(await this.state.claim(message.message_id))) return;
     const send = (text: string) => this.reply(message.message_id, text);
@@ -150,7 +157,8 @@ export class Bridge {
     if (!this.config.allowed.has(user)) { await send('此账号尚未授权。发送 /whoami 获取 ID，由服务管理员加入白名单。'); return; }
     await this.start();
     if (this.closing) return;
-    const key = JSON.stringify([this.config.workspace, message.chat_id, user]);
+    const group = message.chat_type === 'group';
+    const key = JSON.stringify([this.config.workspace, message.chat_id, group ? 'group' : user]);
     const match = prompt.match(/^\/(\S+)(?:\s+([\s\S]*))?$/);
     const command = match?.[1];
     const args = match?.[2]?.trim() || '';
@@ -161,7 +169,7 @@ export class Bridge {
       const pending = owned.filter(task => task.phase === 'running' || task.phase === 'queued').sort((a, b) => Number(a.phase === 'queued') - Number(b.phase === 'queued') || a.queuedAt - b.queuedAt);
       const recent = owned.filter(task => task.phase !== 'running' && task.phase !== 'queued').sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 10);
       const tasks = [...pending, ...recent];
-      await send(`**并行执行：** ${this.active.size}/${this.config.parallel}\n\n${tasks.length ? tasks.map(task => `- ${this.describe(task)}`).join('\n') : '当前会话空闲，尚无任务。'}\n\n用 /task 描述 创建独立任务，/continue 任务ID 描述 继续指定任务。`);
+      await send(`**并行执行：** ${this.active.size}/${this.config.parallel}${group ? '\n\n本群共用上下文，同群任务按顺序执行。' : ''}\n\n${tasks.length ? tasks.map(task => `- ${this.describe(task)}`).join('\n') : '当前会话空闲，尚无任务。'}\n\n用 /task 描述 创建独立任务，/continue 任务ID 描述 继续指定任务。`);
       return;
     }
     if (command === 'status' || command === 'result') {
@@ -198,21 +206,25 @@ export class Bridge {
       task = this.find(key, continuation[1]!);
       if (!task) { await send('找不到你的任务。用 /tasks 查看任务 ID。'); return; }
       prompt = continuation[2]!;
-      if (this.busy(task)) { await send(`任务 ${task.id} 尚未结束。要并行执行其他工作，请用 /task 描述。`); return; }
+      if (this.busy(task) && !group) { await send(`任务 ${task.id} 尚未结束。要并行执行其他工作，请用 /task 描述。`); return; }
     } else if (command === 'task' || command === 'new') {
       if (!args) { await send('用法：/task 描述'); return; }
       prompt = args;
     } else if (command) { await send(help); return; }
     else {
-      task = this.owned(key).find(item => [message.parent_id, message.root_id].some(id => !!id && item.messageIds.includes(id)));
-      if (task && this.busy(task)) { await send(`任务 ${task.id} 仍在执行。要并行创建新任务，请用 /task 描述。`); return; }
-      if (!task) { task = this.current(key); if (task && this.busy(task)) task = undefined; }
+      if (group) task = this.current(key);
+      else {
+        task = this.owned(key).find(item => [message.parent_id, message.root_id].some(id => !!id && item.messageIds.includes(id)));
+        if (task && this.busy(task)) { await send(`任务 ${task.id} 仍在执行。要并行创建新任务，请用 /task 描述。`); return; }
+        if (!task) { task = this.current(key); if (task && this.busy(task)) task = undefined; }
+      }
     }
     const pending = Object.values(this.state.data.tasks).filter(item => item.phase === 'queued').length;
     if (this.active.size + pending >= this.config.parallel + this.config.queued) { await send('并行名额和排队队列已满，请稍后重试。'); return; }
     const now = Date.now();
-    if (!task) {
-      task = { id: this.newId(), ownerKey: key, title: prompt.replace(/\s+/g, ' ').slice(0, 80), prompt, phase: 'queued', createdAt: now, updatedAt: now, queuedAt: now, messageId: message.message_id, messageIds: [message.message_id] };
+    if (!task || group) {
+      const previousTaskId = task?.id;
+      task = { ...(group ? { group: true, previousTaskId } : {}), id: this.newId(), ownerKey: key, title: prompt.replace(/\s+/g, ' ').slice(0, 80), prompt, phase: 'queued', createdAt: now, updatedAt: now, queuedAt: now, messageId: message.message_id, messageIds: [message.message_id] };
       this.state.data.tasks[task.id] = task;
     } else {
       task.prompt = prompt; task.phase = 'queued'; task.updatedAt = now; task.queuedAt = now;
@@ -232,10 +244,30 @@ export class Bridge {
     }
   }
 
+  private previousContext(task: TaskRecord): TaskRecord | undefined {
+    const seen = new Set([task.id]);
+    let id = task.previousTaskId;
+    while (id && !seen.has(id)) {
+      seen.add(id);
+      const previous = this.find(task.ownerKey, id);
+      if (!previous) return;
+      if (previous.workspace) return previous;
+      id = previous.previousTaskId;
+    }
+  }
+
   private pump() {
     if (this.closing) return;
     while (this.active.size < this.config.parallel) {
-      const task = Object.values(this.state.data.tasks).filter(item => item.phase === 'queued' && this.ready.has(item.id)).sort((a, b) => a.queuedAt - b.queuedAt).find(item => !item.workspace || ![...this.active.keys()].some(id => this.state.data.tasks[id]?.workspace === item.workspace));
+      const task = Object.values(this.state.data.tasks).filter(item => item.phase === 'queued').sort((a, b) => a.queuedAt - b.queuedAt).find((item, index, queue) => {
+        if (!this.ready.has(item.id) || (item.group && queue.slice(0, index).some(earlier => earlier.ownerKey === item.ownerKey))) return false;
+        const previous = this.previousContext(item);
+        const workspace = item.workspace || previous?.workspace;
+        return ![...this.active.keys()].some(id => {
+          const running = this.state.data.tasks[id]!;
+          return (item.group && running.ownerKey === item.ownerKey) || (!!workspace && running.workspace === workspace);
+        }) && !(item.previousTaskId && this.state.data.tasks[item.previousTaskId] && this.busy(this.state.data.tasks[item.previousTaskId]!));
+      });
       if (!task) break;
       this.ready.delete(task.id); task.phase = 'running'; task.updatedAt = Date.now();
       const runtime: ActiveTask = { controller: new AbortController(), done: Promise.resolve(), progress: { step: '正在准备独立工作目录' } };
@@ -253,6 +285,15 @@ export class Bridge {
     const heartbeat = setInterval(update, 60_000);
     try {
       await this.state.save(); update();
+      if (task.group && !task.workspace) {
+        const previous = this.previousContext(task);
+        if (previous) {
+          task.workspace = previous.workspace;
+          task.branch = previous.branch;
+          task.baseCommit = previous.baseCommit;
+          task.threadId = previous.threadId;
+        }
+      }
       Object.assign(task, await this.workspaces.prepare(task));
       await this.state.save(); prepared = true;
       if (runtime.controller.signal.aborted) throw new Error('Aborted');
