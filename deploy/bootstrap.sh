@@ -18,6 +18,9 @@ curl --fail --retry 3 -LO "https://nodejs.org/dist/${NODE_VERSION}/SHASUMS256.tx
 awk -v file="$NODE_ARCHIVE" '$2 == file' SHASUMS256.txt | sha256sum -c -
 tar -xJf "$NODE_ARCHIVE" -C /usr/local --strip-components=1
 
+npm install --global @openai/codex@0.170.0 --registry=https://registry.npmjs.org --no-audit --no-fund
+codex --version
+
 id codex >/dev/null 2>&1 || useradd --create-home --shell /bin/bash codex
 install -d -o root -g root -m 755 /opt/codex-lark
 git clone --branch main --single-branch https://github.com/simple5960/codex-lark.git /opt/codex-lark
@@ -46,6 +49,7 @@ LARK_DOMAIN=lark
 ALLOWED_OPEN_IDS=ou_e988b0efe35f221758d3e6565ef5deb8
 CODEX_WORKSPACE=/srv/codex/workspace
 CODEX_SANDBOX=workspace-write
+CODEX_EXECUTABLE=/usr/local/bin/codex
 MAX_PARALLEL_TASKS=2
 MAX_QUEUED_TASKS=20
 EOF

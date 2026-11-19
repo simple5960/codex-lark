@@ -12,7 +12,10 @@ try {
   const { client } = createLark(credentials, config.domain);
   const name = await checkBot(client);
   console.log(`Lark 应用：验证成功${name ? `（${name}）` : ''}`);
-  const login = spawnSync('codex', ['login', 'status'], { encoding: 'utf8' });
+  const version = spawnSync(config.codexExecutable, ['--version'], { encoding: 'utf8' });
+  if (version.status !== 0) throw new Error('GlobalCodexNotFound');
+  console.log(`全局 Codex：${config.codexExecutable}`);
+  const login = spawnSync(config.codexExecutable, ['login', 'status'], { encoding: 'utf8' });
   if (login.status !== 0) throw new Error('CodexLoginRequired');
   console.log('Codex 登录：有效（可通过 npm run login 切换到 ChatGPT 登录）');
 } catch (error) {

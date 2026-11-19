@@ -25,6 +25,7 @@ export async function readConfig(env = process.env) {
     secretId: env.AWS_SECRET_ID || 'simple-codex',
     allowed: new Set((env.ALLOWED_OPEN_IDS || '').split(',').map(s => s.trim()).filter(Boolean)),
     model: env.CODEX_MODEL,
+    codexExecutable: env.CODEX_EXECUTABLE || 'codex',
     statePath: resolve('.data/state.json'),
     parallel, queued, worktreeRoot: resolve(env.TASK_WORKTREE_ROOT || '.data/worktrees'),
   };

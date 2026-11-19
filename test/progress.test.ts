@@ -1,12 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { ThreadEvent } from '@openai/codex-sdk';
+import type { ThreadEvent } from '../src/codex-cli.ts';
 import { consumeEvents, progressForEvent } from '../src/runner.ts';
 import { renderProgress, renderFinal, type TaskProgress } from '../src/progress.ts';
 
 async function* stream(events: ThreadEvent[]) { yield* events; }
 
-test('SDK 事件输出任务计划、命令与阶段性回复，不暴露 reasoning 项', async () => {
+test('CLI 事件输出任务计划、命令与阶段性回复，不暴露 reasoning 项', async () => {
   const progress: TaskProgress[] = [];
   const threads: string[] = [];
   const events: ThreadEvent[] = [

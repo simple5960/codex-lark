@@ -27,7 +27,7 @@ async function setup(t: { after(fn: () => Promise<void>): void }, runner: Runner
   const config: Config = {
     workspace: dir, statePath: state.path, allowed: new Set(['ou_owner']), timeout: 5000,
     sandbox: 'workspace-write', domain: 'lark', secretId: 'test', region: undefined, model: undefined,
-    parallel: 2, queued: 20, worktreeRoot: join(dir, 'worktrees'),
+    codexExecutable: 'codex', parallel: 2, queued: 20, worktreeRoot: join(dir, 'worktrees'),
   };
   const workspaces: TaskWorkspaces = { prepare: async task => ({ workspace: task.workspace || join(dir, task.id), branch: task.branch || `codex/task-${task.id}` }) };
   const startTask: TaskCardFactory = factory ?? (async (id, text, existing) => {
@@ -184,7 +184,7 @@ test('失败和超时写回卡片，并释放并行名额', async t => {
       if (mode === 'failed') throw new Error('failed');
       await new Promise<void>((_, reject) => signal.addEventListener('abort', () => reject(new Error('abort')), { once: true })); return '';
     } });
-    config.timeout = 20;
+    config.timeout = mode === 'timeout' ? 20 : 5000;
     await bridge.receive(event('/task work')); await until(() => finals.length === 1);
     assert.equal(Object.values(state.data.tasks)[0]!.phase, mode);
     assert.ok(finals[0]!.includes(mode === 'failed' ? '任务失败' : '任务超时'));

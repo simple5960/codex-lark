@@ -1,4 +1,4 @@
-import { Codex, type ThreadOptions, type ThreadEvent } from '@openai/codex-sdk';
+import { codexEvents, type ThreadEvent } from './codex-cli.ts';
 import type { Config } from './config.ts';
 import type { TaskProgress } from './progress.ts';
 
@@ -21,7 +21,7 @@ export function progressForEvent(event: ThreadEvent): Partial<TaskProgress> | un
     case 'agent_message': return { step: '正在生成回复', output: item.text, outputKind: 'markdown' };
     case 'command_execution': return {
       step: item.status === 'in_progress' ? '正在执行命令' : `命令已结束${item.exit_code === undefined ? '' : `（退出码 ${item.exit_code}）`}`,
-      output: `$ ${item.command}\n${item.aggregated_output}`, outputKind: 'text',
+      output: `$ ${item.command}\n${item.aggregated_output || ''}`, outputKind: 'text',
     };
     case 'file_change': return { step: '正在更新文件', output: item.changes.map(change => `${change.kind}: ${change.path}`).join('\n'), outputKind: 'text' };
     case 'mcp_tool_call': return { step: `调用工具 ${item.server}/${item.tool}` };
@@ -57,20 +57,14 @@ export function codexEnvironment(env = process.env) {
 }
 
 export function createRunner(config: Config): Runner {
-  const codex = new Codex({ env: codexEnvironment() });
-  const options: ThreadOptions = {
-    workingDirectory: config.workspace,
-    sandboxMode: config.sandbox,
-    approvalPolicy: 'never',
-    networkAccessEnabled: false,
-    skipGitRepoCheck: true,
-    ...(config.model ? { model: config.model } : {}),
-  };
   return {
     async run(prompt, threadId, hooks) {
-      const taskOptions = { ...options, workingDirectory: hooks.workingDirectory || config.workspace };
-      const thread = threadId ? codex.resumeThread(threadId, taskOptions) : codex.startThread(taskOptions);
-      const { events } = await thread.runStreamed(prompt, { signal: hooks.signal });
+      const events = codexEvents(prompt, threadId, {
+        executable: config.codexExecutable,
+        workspace: hooks.workingDirectory || config.workspace,
+        sandbox: config.sandbox, env: codexEnvironment(), signal: hooks.signal,
+        ...(config.model ? { model: config.model } : {}),
+      });
       return consumeEvents(events, hooks);
     },
   };
