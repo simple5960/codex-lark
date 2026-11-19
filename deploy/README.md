@@ -1,6 +1,6 @@
 # AWS 常驻部署
 
-`bootstrap.sh` 用于专用 Ubuntu 22.04 EC2 实例的 user-data，会安装 Node.js、依赖、全局 Codex CLI（0.170.0） 和 `codex-lark` systemd 服务。应用安装在 `/opt/codex-lark`，任务工作目录为 `/srv/codex/workspace`，ChatGPT 登录保存在专用 `codex` 用户的 home 中。脚本是首次安装用，不应在已有业务机器上重复运行。
+`bootstrap.sh` 用于专用 Ubuntu 22.04 EC2 实例的 user-data，会安装 Node.js、依赖、Codex SDK 和 `codex-lark` systemd 服务。应用安装在 `/opt/codex-lark`，任务工作目录为 `/srv/codex/workspace`，ChatGPT 登录保存在专用 `codex` 用户的 home 中。脚本是首次安装用，不应在已有业务机器上重复运行。
 
 ## 已部署实例
 
@@ -53,15 +53,3 @@ sudo -u codex -H bash -lc 'cd /opt/codex-lark && npm run doctor'
 参考：[AWS Session Manager 登录](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/connect-with-systems-manager-session-manager.html)、[Codex 设备码登录](https://developers.openai.com/codex/auth/)。
 
 群聊按 chat_id 共享上下文，同群顺序执行、不同群并行。后台需发布群消息读取权限，再将机器人加入群；只开 @权限时每条请求需 @机器人，免 @需 `im:message.group_msg` 权限。
-
-## 全局 CLI 与扩展管理
-
-机器人使用 `/usr/local/bin/codex`，在应用配置中设置 `CODEX_EXECUTABLE=/usr/local/bin/codex`；项目依赖不包含 Codex CLI 或 SDK。所有系统用户可运行全局程序，用户配置不自动共享。要与机器人共用登录、MCP、插件和用户级 Skill：
-
-```sh
-sudo -u codex -H bash
-cd /srv/codex/workspace
-codex
-```
-
-更新程序使用管理员终端执行 `sudo npm install -g @openai/codex@版本号`，先验证非交互执行、JSONL 和续聊兼容性，再重启服务。不要复制认证缓存或把配置目录改成所有用户可写。运行 `npm run doctor` 会验证实际配置的全局可执行文件和登录状态。
