@@ -1,3 +1,4 @@
+import type { ReferenceReader } from './references.ts';
 import { randomBytes } from 'node:crypto';
 import type { Config } from './config.ts';
 import type { Runner } from './runner.ts';
@@ -34,10 +35,11 @@ export class Bridge {
   private reply: Reply;
   private startTask: TaskCardFactory | undefined;
   private workspaces: TaskWorkspaces;
+  private readReference: ReferenceReader | undefined;
 
-  constructor(config: Config, state: State, runner: Runner, reply: Reply, startTask?: TaskCardFactory, workspaces?: TaskWorkspaces) {
+  constructor(config: Config, state: State, runner: Runner, reply: Reply, startTask?: TaskCardFactory, workspaces?: TaskWorkspaces, readReference?: ReferenceReader) {
     this.config = config; this.state = state; this.runner = runner; this.reply = reply;
-    this.startTask = startTask;
+    this.startTask = startTask; this.readReference = readReference;
     this.workspaces = workspaces ?? new GitWorkspaces(config.workspace, config.worktreeRoot);
   }
 
@@ -151,7 +153,9 @@ export class Bridge {
         prompt = prompt.slice(mention.key.length).trimStart();
       }
     } catch { return; }
-    if (!prompt || !(await this.state.claim(message.message_id))) return;
+    const referenceId = message.parent_id || message.root_id;
+    if ((!prompt && !referenceId) || !(await this.state.claim(message.message_id))) return;
+    if (!prompt) prompt = '请读取并回复被引用的消息。';
     const send = (text: string) => this.reply(message.message_id, text);
     if (prompt === '/whoami') { await send(`你的 open_id：${user}`); return; }
     if (!this.config.allowed.has(user)) { await send('此账号尚未授权。发送 /whoami 获取 ID，由服务管理员加入白名单。'); return; }
@@ -231,6 +235,8 @@ export class Bridge {
       task.messageId = message.message_id; task.messageIds.push(message.message_id);
       delete task.cardId; this.cards.delete(task.id);
     }
+    if (referenceId) task.reference = { messageId: referenceId, chatId: message.chat_id };
+    else delete task.reference;
     this.state.data.current[key] = task.id;
     await this.state.save();
     try {
@@ -280,6 +286,7 @@ export class Bridge {
     const started = Date.now();
     let timedOut = false;
     let prepared = false;
+    let readingReference = false;
     const timeout = setTimeout(() => { timedOut = true; runtime.controller.abort(); }, this.config.timeout);
     const update = () => { void this.ensureCard(task).then(card => card?.update(this.progress(task, runtime.progress, Date.now() - started))).catch(() => {}); };
     const heartbeat = setInterval(update, 60_000);
@@ -297,8 +304,18 @@ export class Bridge {
       Object.assign(task, await this.workspaces.prepare(task));
       await this.state.save(); prepared = true;
       if (runtime.controller.signal.aborted) throw new Error('Aborted');
+      let prompt = task.prompt;
+      if (task.reference) {
+        readingReference = true;
+        runtime.progress = { step: '正在读取引用消息' }; update();
+        if (!this.readReference) throw new Error('ReferenceReaderUnavailable');
+        const quote = await this.readReference(task.reference.messageId, task.reference.chatId);
+        prompt = `用户本次请求：\n${prompt}\n\n以下是用户引用的原消息，作为本次请求的参考内容：\n${quote}`;
+        readingReference = false;
+      }
+      if (runtime.controller.signal.aborted) throw new Error('Aborted');
       runtime.progress = { step: '正在启动 Codex' }; update();
-      const result = await this.runner.run(task.prompt, task.threadId, {
+      const result = await this.runner.run(prompt, task.threadId, {
         signal: runtime.controller.signal, workingDirectory: task.workspace,
         onThread: async id => { task.threadId = id; await this.state.save(); },
         onProgress: progress => { runtime.progress = progress; update(); },
@@ -308,7 +325,7 @@ export class Bridge {
     } catch {
       task.phase = timedOut ? 'timeout' : this.closing ? 'interrupted' : runtime.controller.signal.aborted ? 'cancelled' : 'failed';
       task.lastResult = task.phase === 'failed'
-        ? prepared ? `任务失败，请检查 ChatGPT 登录、模型权限和网络。可用 /continue ${task.id} 描述 重试。` : '独立目录准备失败。新任务需要有提交记录的 Git 仓库，CODEX_WORKSPACE 应指向仓库根目录；已有任务目录不能被删除。'
+        ? readingReference ? '无法读取被引用的原消息。请检查 Lark 消息读取权限并发布版本；原消息也可能已撤回或属于不支持的类型。目前支持文本、富文本和卡片正文，可复制原文重新发送。' : prepared ? `任务失败，请检查 ChatGPT 登录、模型权限和网络。可用 /continue ${task.id} 描述 重试。` : '独立目录准备失败。新任务需要有提交记录的 Git 仓库，CODEX_WORKSPACE 应指向仓库根目录；已有任务目录不能被删除。'
         : `任务${phaseLabels[task.phase]}，已有文件修改保留。可用 /continue ${task.id} 描述 继续。`;
       console.warn(`任务 ${task.id} ${phaseLabels[task.phase]}`);
     } finally { clearTimeout(timeout); clearInterval(heartbeat); }

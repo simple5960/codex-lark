@@ -9,6 +9,7 @@ import { parseSecret } from '../src/secrets.ts';
 import { codexEnvironment, type Runner } from '../src/runner.ts';
 import type { Config } from '../src/config.ts';
 import type { TaskCardFactory } from '../src/progress.ts';
+import type { ReferenceReader } from '../src/references.ts';
 import type { TaskWorkspaces } from '../src/workspaces.ts';
 
 function event(text: string, id = Math.random().toString(), user = 'ou_owner'): MessageEvent {
@@ -18,7 +19,7 @@ async function until(predicate: () => boolean) {
   const end = Date.now() + 3000;
   while (!predicate()) { assert.ok(Date.now() < end, '等待任务状态超时'); await new Promise(resolve => setTimeout(resolve, 5)); }
 }
-async function setup(t: { after(fn: () => Promise<void>): void }, runner: Runner, factory?: TaskCardFactory) {
+async function setup(t: { after(fn: () => Promise<void>): void }, runner: Runner, factory?: TaskCardFactory, reader: ReferenceReader = async () => 'quoted text') {
   const dir = await mkdtemp(join(tmpdir(), 'codex-lark-test-'));
   const state = new State(join(dir, 'state.json')); await state.load();
   const replies: { id: string; text: string }[] = [];
@@ -34,7 +35,7 @@ async function setup(t: { after(fn: () => Promise<void>): void }, runner: Runner
     return { messageId: existing || `card-${id}`, update: text => { updates.push(text); }, finish: async text => { finals.push(text); } };
   });
   const reply = async (id: string, text: string) => { replies.push({ id, text }); };
-  const bridge = new Bridge(config, state, runner, reply, startTask, workspaces);
+  const bridge = new Bridge(config, state, runner, reply, startTask, workspaces, reader);
   await bridge.start();
   t.after(async () => { await bridge.shutdown(); await rm(dir, { recursive: true, force: true }); });
   return { bridge, state, replies, config, finals, updates, reply, startTask, workspaces };
@@ -169,7 +170,7 @@ test('旧状态在启动时迁移，即使先创建独立任务也能在列表�
   const key = JSON.stringify([env.config.workspace, 'chat', 'ou_owner']);
   env.state.data.threads[key] = 'old-thread'; await env.state.save();
   const restored = new State(env.state.path); await restored.load();
-  const bridge = new Bridge(env.config, restored, immediate, env.reply, env.startTask, env.workspaces);
+  const bridge = new Bridge(env.config, restored, immediate, env.reply, env.startTask, env.workspaces, async () => 'quoted text');
   await bridge.start();
   assert.ok(Object.values(restored.data.tasks).some(task => task.threadId === 'old-thread' && task.workspace === env.config.workspace));
   await bridge.receive(event('/task new')); await until(() => env.finals.length === 1);
@@ -201,7 +202,7 @@ test('重启保留目录、线程和结果，运行任务中断后不自动重�
   env.state.data.tasks[queued.id] = queued; await env.state.save();
   const restored = new State(env.state.path); await restored.load();
   const prompts: string[] = [];
-  const bridge = new Bridge(env.config, restored, { run: async prompt => { prompts.push(prompt); return 'queued result'; } }, env.reply, env.startTask, env.workspaces);
+  const bridge = new Bridge(env.config, restored, { run: async prompt => { prompts.push(prompt); return 'queued result'; } }, env.reply, env.startTask, env.workspaces, async () => 'quoted text');
   await bridge.start(); await until(() => restored.data.tasks[queued.id]!.phase === 'completed');
   assert.deepEqual(prompts, ['queued']);
   assert.equal(restored.data.tasks[original.id]!.phase, 'interrupted');
@@ -292,7 +293,7 @@ test('群会话重启保留上下文，回复旧卡片仍衔接最新一轮；ne
   await env.bridge.receive(groupEvent('first', 'a', 'ou_owner', 'first'));
   await until(() => env.finals.length === 1); await env.bridge.shutdown();
   const restored = new State(env.state.path); await restored.load();
-  const bridge = new Bridge(env.config, restored, runner, env.reply, env.startTask, env.workspaces);
+  const bridge = new Bridge(env.config, restored, runner, env.reply, env.startTask, env.workspaces, async () => 'quoted text');
   t.after(() => bridge.shutdown()); await bridge.start();
   await bridge.receive(groupEvent('second', 'a')); await until(() => env.finals.length === 2);
   const third = groupEvent('third', 'a'); third.message.parent_id = 'card-first';
@@ -322,4 +323,43 @@ test('群前一条消息创建卡片失败后，已就绪的后续任务能继�
   assert.deepEqual(prompts, []);
   rejectFirst(new Error('card failed')); await first;
   await until(() => prompts.length === 1); assert.deepEqual(prompts, ['second']);
+});
+
+test('引用后仅 @机器人也读取直接父消息并回复，附加要求与原文一起送入 Codex', async t => {
+  const inputs: string[] = []; const reads: string[] = [];
+  const env = await setup(t, { run: async prompt => { inputs.push(prompt); return '回答'; } }, undefined,
+    async (id, chat) => { reads.push(`${chat}/${id}`); return '怎么接入 Lark MCP？'; });
+  const first = groupEvent('@_user_1', 'a');
+  first.message.mentions = [{ key: '@_user_1' }]; first.message.parent_id = 'direct'; first.message.root_id = 'root';
+  await env.bridge.receive(first); await until(() => env.finals.length === 1);
+  assert.deepEqual(reads, ['a/direct']);
+  assert.match(inputs[0]!, /请读取并回复/); assert.match(inputs[0]!, /怎么接入 Lark MCP/);
+  const next = groupEvent('请详细解释', 'a'); next.message.parent_id = 'direct';
+  await env.bridge.receive(next); await until(() => env.finals.length === 2);
+  assert.match(inputs[1]!, /请详细解释/); assert.match(inputs[1]!, /怎么接入 Lark MCP/);
+});
+
+test('未授权、重复消息及纯命令不触发引用读取；引用失败不调用 Codex', async t => {
+  let reads = 0; let runs = 0;
+  const env = await setup(t, { run: async () => { runs++; return ''; } }, undefined, async () => { reads++; throw new Error('forbidden'); });
+  const denied = groupEvent('@_user_1', 'a', 'ou_stranger');
+  denied.message.mentions = [{ key: '@_user_1' }]; denied.message.parent_id = 'source';
+  await env.bridge.receive(denied); assert.equal(reads, 0);
+  const command = groupEvent('/tasks'); command.message.parent_id = 'source';
+  await env.bridge.receive(command); assert.equal(reads, 0);
+  const request = groupEvent('解释一下'); request.message.parent_id = 'source';
+  await Promise.all([env.bridge.receive(request), env.bridge.receive(request)]);
+  await until(() => env.finals.length === 1);
+  assert.equal(reads, 1); assert.equal(runs, 0); assert.match(env.finals[0]!, /无法读取被引用/);
+});
+
+test('后续普通续聊不重复读取上一轮引用，排队引用信息会持久化', async t => {
+  let reads = 0;
+  const env = await setup(t, immediate, undefined, async () => { reads++; return '原文'; });
+  const first = groupEvent('回答'); first.message.parent_id = 'source';
+  await env.bridge.receive(first); await until(() => env.finals.length === 1);
+  const saved = new State(env.state.path); await saved.load();
+  assert.equal(Object.values(saved.data.tasks)[0]!.reference?.messageId, 'source');
+  await env.bridge.receive(groupEvent('继续')); await until(() => env.finals.length === 2);
+  assert.equal(reads, 1);
 });

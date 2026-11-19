@@ -6,6 +6,7 @@ export type TaskRecord = {
   previousTaskId?: string;
   title: string;
   prompt: string;
+  reference?: { messageId: string; chatId: string };
   phase: TaskPhase;
   createdAt: number;
   updatedAt: number;

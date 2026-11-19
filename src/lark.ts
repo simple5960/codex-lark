@@ -1,6 +1,7 @@
 import * as lark from '@larksuiteoapi/node-sdk';
 import { createMarkdownReply } from './messages.ts';
 import { createTaskCardFactory } from './live-card.ts';
+import { createReferenceReader } from './references.ts';
 import { randomUUID } from 'node:crypto';
 
 export async function checkBot(client: lark.Client) {
@@ -40,5 +41,6 @@ export function createLark(credentials: { appId: string; appSecret: string }, do
     (messageId, content) => client.im.message.patch({ path: { message_id: messageId }, data: { content } }),
     reply,
   );
-  return { client, ws, reply, startTask };
+  const readReference = createReferenceReader(messageId => client.im.message.get({ path: { message_id: messageId } }));
+  return { client, ws, reply, startTask, readReference };
 }
