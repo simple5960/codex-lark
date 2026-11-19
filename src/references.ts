@@ -22,7 +22,7 @@ export function referenceText(type: string, content: string): string {
     if (Array.isArray(value)) { for (const item of value) walk(item, depth + 1); return; }
     if (!value || typeof value !== 'object') return;
     const node = value as Record<string, unknown>;
-    for (const key of ['title', 'text', 'content', 'elements', 'body', 'fields', 'columns']) {
+    for (const key of ['title', 'text', 'content', 'elements', 'body', 'fields', 'columns', 'property']) {
       if (node[key] !== undefined) walk(node[key], depth + 1);
     }
   };

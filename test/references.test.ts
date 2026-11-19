@@ -14,6 +14,16 @@ test('提取引用的文本、富文本及卡片正文，忽略附件和交互�
   assert.throws(() => referenceText('interactive', '{"body":{}}'));
 });
 
+test('解析 Lark 返回的卡片渲染树，提取 property 下的实际正文', () => {
+  const raw = { body: { tag: 'body', property: { elements: [
+    { tag: 'markdown', property: { elements: [
+      { tag: 'heading', property: { elements: [{ tag: 'text', property: { content: '任务完成' } }] } },
+      { tag: 'text', property: { content: '阶段性结果' } },
+    ], markdownElements: [], originTag: 'markdown' } },
+  ] } } };
+  assert.equal(referenceText('interactive', JSON.stringify({ json_card: JSON.stringify(raw) })), '任务完成\n阶段性结果');
+});
+
 test('引用长度有上限，Unicode 不损坏', () => {
   const text = referenceText('text', JSON.stringify({ text: '🙂'.repeat(15000) }));
   assert.ok(text.endsWith('[引用内容过长，已截断]')); assert.ok(!text.includes('\uFFFD'));
