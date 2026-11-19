@@ -41,6 +41,6 @@ export function createLark(credentials: { appId: string; appSecret: string }, do
     (messageId, content) => client.im.message.patch({ path: { message_id: messageId }, data: { content } }),
     reply,
   );
-  const readReference = createReferenceReader(messageId => client.im.message.get({ path: { message_id: messageId } }));
+  const readReference = createReferenceReader(messageId => client.im.message.get({ path: { message_id: messageId }, params: { card_msg_content_type: 'raw_card_content' } }));
   return { client, ws, reply, startTask, readReference };
 }

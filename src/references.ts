@@ -31,6 +31,9 @@ export function referenceText(type: string, content: string): string {
     // 多语言富文本只选一个版本，避免同一正文重复送入上下文。
     const variants = body as Record<string, unknown>;
     walk(variants.zh_cn ?? variants.en_us ?? Object.values(variants)[0]);
+  } else if (type === 'interactive' && body && typeof body === 'object' && 'json_card' in body && typeof body.json_card === 'string') {
+    // Lark raw_card_content 将原始卡片 JSON 再包装成字符串。
+    walk(JSON.parse(body.json_card));
   } else walk(body);
   const text = lines.join('\n').trim();
   if (!text) throw new Error('EmptyReference');

@@ -8,6 +8,7 @@ test('提取引用的文本、富文本及卡片正文，忽略附件和交互�
   assert.equal(referenceText('post', JSON.stringify(post)), '标题\n内容\n文档');
   const card = { body: { elements: [{ tag: 'markdown', content: '**结果**' }, { tag: 'button', text: { tag: 'plain_text', content: '继续' }, value: { secret: 'hidden' } }] } };
   assert.equal(referenceText('interactive', JSON.stringify(card)), '**结果**\n继续');
+  assert.equal(referenceText('interactive', JSON.stringify({ json_card: JSON.stringify(card), json_attachment: { images: { secret: 'hidden' } } })), '**结果**\n继续');
   assert.throws(() => referenceText('image', '{"image_key":"secret"}'));
   assert.throws(() => referenceText('text', 'bad json'));
   assert.throws(() => referenceText('interactive', '{"body":{}}'));
